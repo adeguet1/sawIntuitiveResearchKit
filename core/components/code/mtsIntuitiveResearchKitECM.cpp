@@ -26,6 +26,7 @@ http://www.cisst.org/cisst/license.txt.
 #include <cisstMultiTask/mtsInterfaceRequired.h>
 #include <cisstParameterTypes/prmEventButton.h>
 
+#include <sawIntuitiveResearchKit/arm_controller_manager.h>
 #include <sawIntuitiveResearchKit/mtsIntuitiveResearchKitECM.h>
 #include <sawIntuitiveResearchKit/robManipulatorECM.h>
 
@@ -242,9 +243,9 @@ robManipulator::Errno mtsIntuitiveResearchKitECM::InverseKinematics(vctDoubleVec
                                                                     const vctFrm4x4 & cartesianGoal) const
 {
     // solve IK
-    if (Manipulator->InverseKinematics(jointSet, cartesianGoal) == robManipulator::ESUCCESS) {
+    if (manipulator().InverseKinematics(jointSet, cartesianGoal) == robManipulator::ESUCCESS) {
         // find closest solution mod 2 pi
-        const double difference = m_kin_measured_js.Position()[3] - jointSet[3];
+        const double difference = m_arm_state.kin_measured_js.Position()[3] - jointSet[3];
         const double differenceInTurns = nearbyint(difference / (2.0 * cmnPI));
         jointSet[3] = jointSet[3] + differenceInTurns * 2.0 * cmnPI;
         // make sure we are away from RCM point, this test is
@@ -253,7 +254,7 @@ robManipulator::Errno mtsIntuitiveResearchKitECM::InverseKinematics(vctDoubleVec
             jointSet[2] = 40.0 * cmn_mm;
         }
 #if 0
-        vctFrm4x4 forward = Manipulator->ForwardKinematics(jointSet);
+        vctFrm4x4 forward = manipulator().ForwardKinematics(jointSet);
         vctDouble3 diff;
         diff.DifferenceOf(forward.Translation(), cartesianGoal.Translation());
         std::cerr << cmnInternalTo_mm(diff.Norm()) << "mm ";
@@ -265,10 +266,7 @@ robManipulator::Errno mtsIntuitiveResearchKitECM::InverseKinematics(vctDoubleVec
 
 void mtsIntuitiveResearchKitECM::CreateManipulator(void)
 {
-    if (Manipulator) {
-        delete Manipulator;
-    }
-    Manipulator = new robManipulatorECM();
+    set_manipulator(std::unique_ptr<robManipulator>(new robManipulatorECM()));
 }
 
 void mtsIntuitiveResearchKitECM::Init(void)
@@ -305,6 +303,9 @@ void mtsIntuitiveResearchKitECM::Init(void)
                                 60.0 * cmn_mm,
                                 90.0 * cmnPI_180);
     m_trajectory_j.goal_tolerance.SetAll(3.0 * cmnPI / 180.0); // hard coded to 3 degrees
+    m_controller_manager->configure_move_jp_limits(m_trajectory_j.v_max,
+                                                   m_trajectory_j.a_max,
+                                                   m_trajectory_j.goal_tolerance);
 
     mtsInterfaceRequired * interfaceRequired;
 
@@ -326,6 +327,11 @@ void mtsIntuitiveResearchKitECM::Init(void)
 bool mtsIntuitiveResearchKitECM::is_homed(void) const
 {
     return m_powered && m_encoders_biased_from_pots;
+}
+
+bool mtsIntuitiveResearchKitECM::supports_move_jp_controller(void) const
+{
+    return true;
 }
 
 void mtsIntuitiveResearchKitECM::unhome(void)
@@ -362,7 +368,7 @@ void mtsIntuitiveResearchKitECM::SetGoalHomingArm(void)
         m_trajectory_j.goal.SetAll(0.0);
     } else {
         // stay at current position by default
-        m_trajectory_j.goal.Assign(m_pid_setpoint_js.Position(), number_of_joints());
+        m_trajectory_j.goal.Assign(m_arm_state.pid_setpoint_js.Position(), number_of_joints());
     }
 }
 
@@ -382,9 +388,7 @@ void mtsIntuitiveResearchKitECM::EnterManual(void)
 
 void mtsIntuitiveResearchKitECM::RunManual(void)
 {
-    if (mControlCallback) {
-        mControlCallback->Execute();
-    }
+    run_active_controllers();
 }
 
 void mtsIntuitiveResearchKitECM::LeaveManual(void)
@@ -502,9 +506,9 @@ void mtsIntuitiveResearchKitECM::set_endoscope_type(const std::string & endoscop
         break;
     }
     // remove old tip and replace by new one
-    Manipulator->DeleteTools();
+    manipulator().DeleteTools();
     ToolOffset = new robManipulator(ToolOffsetTransformation);
-    Manipulator->Attach(ToolOffset);
+    manipulator().Attach(ToolOffset);
 
     // update estimated mass for gravity compensation
     double mass;

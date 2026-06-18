@@ -145,6 +145,15 @@ if (cisst_FOUND)
 
     set (_HEADER_FILES
       mtsStateMachine.h
+      arm_state.h
+      arm_kinematics.h
+      arm_command_sink.h
+      arm_controller_resource.h
+      arm_controller_manager.h
+      move_jp_controller.h
+      servo_cf_controller.h
+      servo_cp_controller.h
+      servo_jp_controller.h
       mtsIntuitiveResearchKit.h
       mtsIntuitiveResearchKitArm.h
       mtsIntuitiveResearchKitMTM.h
@@ -177,6 +186,15 @@ if (cisst_FOUND)
 
     set (_SOURCE_FILES
       mtsStateMachine.cpp
+      arm_state.cpp
+      arm_kinematics.cpp
+      arm_command_sink.cpp
+      arm_controller_resource.cpp
+      arm_controller_manager.cpp
+      move_jp_controller.cpp
+      servo_cf_controller.cpp
+      servo_cp_controller.cpp
+      servo_jp_controller.cpp
       mtsIntuitiveResearchKit.cpp
       mtsIntuitiveResearchKitArm.cpp
       mtsIntuitiveResearchKitMTM.cpp

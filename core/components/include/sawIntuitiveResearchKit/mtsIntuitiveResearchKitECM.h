@@ -44,6 +44,7 @@ class CISST_EXPORT mtsIntuitiveResearchKitECM: public mtsIntuitiveResearchKitArm
 
  protected:
     void set_generation(const dvrk::generation generation) override;
+    bool supports_move_jp_controller(void) const override;
     void PostConfigure(const Json::Value & jsonConfig,
                        const cmnPath & configPath,
                        const std::string & filename) override;
@@ -69,7 +70,7 @@ class CISST_EXPORT mtsIntuitiveResearchKitECM: public mtsIntuitiveResearchKitArm
 
     // see base class
     inline bool is_safe_for_cartesian_control(void) const override {
-        return (m_kin_measured_js.Position().at(2) > 50.0 * cmn_mm);
+        return (m_arm_state.kin_measured_js.Position().at(2) > 50.0 * cmn_mm);
     }
 
     void CreateManipulator(void) override;

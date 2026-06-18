@@ -21,6 +21,8 @@ http://www.cisst.org/cisst/license.txt.
 
 #include <cisstNumerical/nmrPInverse.h>
 
+#include <memory>
+
 #include <cisstMultiTask/mtsTaskPeriodic.h>
 #include <cisstParameterTypes/prmOperatingState.h>
 #include <cisstParameterTypes/prmPositionJointSet.h>
@@ -45,16 +47,21 @@ http://www.cisst.org/cisst/license.txt.
 #include <cisstParameterTypes/prmSimulationType.h>
 
 #include <cisstRobot/robManipulator.h>
-#include <cisstRobot/robReflexxes.h>
 
 #include <sawIntuitiveResearchKit/mtsIntuitiveResearchKit.h>
 #include <sawIntuitiveResearchKit/mtsIntuitiveResearchKitControlTypes.h>
+#include <sawIntuitiveResearchKit/arm_kinematics.h>
+#include <sawIntuitiveResearchKit/arm_state.h>
 #include <sawIntuitiveResearchKit/arm_configuration.h>
 #include <sawIntuitiveResearchKit/mtsStateMachine.h>
 #include <sawIntuitiveResearchKit/robGravityCompensation.h>
 
 // forward declarations
 class osaCartesianImpedanceController;
+namespace dvrk {
+    class arm_command_sink;
+    class arm_controller_manager;
+}
 
 // Always include last
 #include <sawIntuitiveResearchKit/sawIntuitiveResearchKitExport.h>
@@ -62,6 +69,7 @@ class osaCartesianImpedanceController;
 class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
 {
     CMN_DECLARE_SERVICES(CMN_NO_DYNAMIC_CREATION, CMN_LOG_ALLOW_DEFAULT);
+    friend class dvrk::arm_command_sink;
 
  public:
     mtsIntuitiveResearchKitArm(const std::string & componentName, const double periodInSeconds = mtsIntuitiveResearchKit::ArmPeriod);
@@ -90,6 +98,8 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     virtual void set_base_frame(const prmPositionCartesianSet & newBaseFrame);
 
  protected:
+    virtual bool supports_move_jp_controller(void) const;
+
     virtual void ConfigureGC(const Json::Value & CMN_UNUSED(armConfig),
                              const cmnPath & CMN_UNUSED(configPath),
                              const std::string & CMN_UNUSED(filename)) {};
@@ -97,7 +107,7 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     /*! Define wrench reference frame */
     typedef enum {WRENCH_UNDEFINED, WRENCH_SPATIAL, WRENCH_BODY} WrenchType;
 
-    /*! Load m_base_frame and DH parameters from JSON */
+    /*! Load m_kinematics.base_frame() and DH parameters from JSON */
     void ConfigureDH(const Json::Value & jsonConfig, const std::string & filename, const bool ignoreCoupling = false);
     void ConfigureDH(const std::string & filename);
 
@@ -116,6 +126,14 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     /*! Initialization, including resizing data members and setting up
       cisst/SAW interfaces */
     virtual void CreateManipulator(void);
+    bool has_manipulator(void) const;
+    robManipulator & manipulator(void);
+    robManipulator & manipulator(void) const;
+    robManipulator * manipulator_pointer(void);
+    robManipulator * manipulator_pointer(void) const;
+    void set_manipulator(std::unique_ptr<robManipulator> manipulator);
+    dvrk::arm_command_sink & command_sink(void);
+    const dvrk::arm_command_sink & command_sink(void) const;
     virtual void Init(void);
 
     virtual void update_configuration_js(void);
@@ -169,6 +187,7 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     virtual void EnterHomed(void);
     virtual void LeaveHomed(void);
     virtual void RunHomed(void);
+    void run_active_controllers(void);
 
     virtual void EnterPaused(void);
     virtual void EnterFault(void);
@@ -323,7 +342,7 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
         mtsFunctionWrite operating_state;
     } state_events;
 
-    robManipulator * Manipulator = nullptr;
+    dvrk::arm_kinematics m_kinematics;
     std::string mConfigurationFile;
     bool m_has_coupling = false;
     prmActuatorJointCoupling m_coupling;
@@ -333,34 +352,13 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     prmStateCartesian m_servo_cs;
     vctFrm3 mCartesianRelative;
 
-    // internal kinematics
-    prmPositionCartesianGet m_local_measured_cp;
-    vctFrm4x4 m_local_measured_cp_frame;
-    prmPositionCartesianGet m_local_setpoint_cp;
-    vctFrm4x4 m_local_setpoint_cp_frame;
-
-    // with base frame included
-    prmPositionCartesianGet m_measured_cp;
-    vctFrm4x4 m_measured_cp_frame;
-    prmPositionCartesianGet m_setpoint_cp;
-    vctFrm4x4 m_setpoint_cp_frame;
-
-    prmStateCartesian m_measured_cs;
-
     // joints
+    dvrk::arm_state m_arm_state;
     prmPositionJointSet m_servo_jp_param;
     vctDoubleVec m_servo_jp;
     vctDoubleVec m_servo_jv;
-    prmStateJoint
-        m_pid_measured_js,
-        m_pid_setpoint_js,
-        m_kin_measured_js,
-        m_kin_setpoint_js,
-        m_gravity_compensation_setpoint_js;
-    prmConfigurationJoint m_configuration_js;
 
     // efforts
-    vctDoubleMat m_body_jacobian, m_body_jacobian_transpose, m_spatial_jacobian, m_spatial_jacobian_transpose;
     WrenchType m_servo_cf_type;
     prmForceCartesianSet m_servo_cf;
     bool m_body_cf_orientation_absolute = false;
@@ -369,12 +367,6 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
         m_servo_jf; // number of joints for kinematics
     prmForceTorqueJointSet m_feed_forward_jf_param;
     vctDoubleVec m_servo_jf_vector; // number of joints for kinematics, more convenient type than prmForceTorqueJointSet
-    // to estimate wrench from joint efforts
-    nmrPInverseDynamicData
-        m_jacobian_pinverse_data,
-        m_jacobian_transpose_pinverse_data;
-    prmForceCartesianGet m_body_measured_cf, m_spatial_measured_cf;
-
     // cartesian impendance controller
     osaCartesianImpedanceController * mCartesianImpedanceController;
     bool m_cartesian_impedance = false;
@@ -390,16 +382,9 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     // ! Note: non-owning pointer - subclass should own actual instance
     robGravityCompensation * m_rob_gravity_compensation = nullptr;
 
-    // Velocities
-    prmVelocityCartesianGet
-        m_local_measured_cv, m_measured_cv,
-        m_local_setpoint_cv, m_setpoint_cv;
     vctFrm4x4 CartesianPositionFrm;
 
     // Base frame
-    vctFrm4x4 m_base_frame;
-    bool m_base_frame_valid;
-
     bool m_powered = false;
 
     mtsIntuitiveResearchKitControlTypes::ControlSpace m_control_space;
@@ -432,9 +417,8 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
       Otherwise, sets the ratio to 0, i.e. a meaningless value. */
     virtual void trajectory_j_update_ratio(void);
 
-    /*! Sends new velocities and accelerations to Reflexxes.  This
-      needs to be called every time the ratios are changed. */
-    virtual void trajectory_j_update_reflexxes(void);
+    /*! Sends new velocity and acceleration ratios to the trajectory generator. */
+    virtual void trajectory_j_update_generator(void);
 
     /*! Sets control space and mode.  If none are user defined, the
       callbacks will be using the methods provided in this class.
@@ -461,21 +445,24 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
       use the SetControlSpaceAndMode method instead. */
     //@{
     template <class __classType>
+        inline void set_control_callback(void (__classType::*method)(void),
+                                         __classType * classInstantiation) {
+        this->set_control_callback(new mtsCallableVoidMethod<__classType>(method,
+                                                                          classInstantiation));
+    }
+
+    template <class __classType>
         inline void SetControlCallback(void (__classType::*method)(void),
                                        __classType * classInstantiation) {
-        this->SetControlCallback(new mtsCallableVoidMethod<__classType>(method,
-                                                                        classInstantiation));
+        this->set_control_callback(method, classInstantiation);
     }
 
-    inline void SetControlCallback(mtsCallableVoidBase * callback) {
-        if (this->mControlCallback != 0) {
-            delete this->mControlCallback;
-        }
-        this->mControlCallback = callback;
-    }
+    void set_control_callback(mtsCallableVoidBase * callback);
+    void SetControlCallback(mtsCallableVoidBase * callback);
     //@}
 
-    mtsCallableVoidBase * mControlCallback;
+    std::unique_ptr<dvrk::arm_command_sink> m_command_sink;
+    std::unique_ptr<dvrk::arm_controller_manager> m_controller_manager;
 
     virtual void control_servo_jp(void);
     virtual void control_move_jp(void);
@@ -504,14 +491,33 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
     virtual void control_servo_cf_preload(vctDoubleVec & effortPreload,
                                           vctDoubleVec & wrenchPreload);
 
-    struct {
-        robReflexxes Reflexxes;
+    struct trajectory_j_state {
+        void resize(const size_t number_of_joints)
+        {
+            v_max.SetSize(number_of_joints);
+            v.SetSize(number_of_joints);
+            a_max.SetSize(number_of_joints);
+            a.SetSize(number_of_joints);
+            goal.SetSize(number_of_joints);
+            goal_v.SetSize(number_of_joints);
+            goal_error.SetSize(number_of_joints);
+            goal_tolerance.SetSize(number_of_joints);
+            jerk_max.SetSize(number_of_joints);
+            reset_runtime_state();
+        }
+
+        void reset_runtime_state(void)
+        {
+            is_active = false;
+            end_time = 0.0;
+        }
+
         vctDoubleVec v_max;
-        vctDoubleVec v; // max * ratio
+        vctDoubleVec v; // max * ratio, legacy storage for derived classes
         double ratio_v = mtsIntuitiveResearchKit::JointTrajectory::ratio_v;
         mtsFunctionWrite ratio_v_event;
         vctDoubleVec a_max;
-        vctDoubleVec a; // max * ratio
+        vctDoubleVec a; // max * ratio, legacy storage for derived classes
         double ratio_a = mtsIntuitiveResearchKit::JointTrajectory::ratio_a;
         mtsFunctionWrite ratio_a_event;
         // ratio to overwire ratio_v and ratio_a
@@ -522,8 +528,8 @@ class CISST_EXPORT mtsIntuitiveResearchKitArm: public mtsTaskPeriodic
         vctDoubleVec goal_error;
         vctDoubleVec goal_tolerance;
         vctDoubleVec jerk_max;
-        bool is_active;
-        double end_time;
+        bool is_active = false;
+        double end_time = 0.0;
         mtsFunctionWrite goal_reached_event; // sends true if goal reached, false otherwise
     } m_trajectory_j;
 

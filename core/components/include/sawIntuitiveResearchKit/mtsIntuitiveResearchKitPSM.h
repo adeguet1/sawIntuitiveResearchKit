@@ -96,6 +96,7 @@ protected:
     void Init(void) override;
 
     bool is_homed(void) const override;
+    bool supports_move_jp_controller(void) const override;
     void unhome(void) override;
     bool is_joint_ready(void) const override;
     bool is_cartesian_ready(void) const override;
